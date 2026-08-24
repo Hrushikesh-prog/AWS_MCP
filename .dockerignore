@@ -1,0 +1,20 @@
+# venv and caches
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Dev/config artifacts — never bake credentials into the image
+.env
+.env.*
+claude_desktop_config.json
+*.json
+
+# IDE / OS noise
+.vscode/
+.idea/
+.claude/
+*.DS_Store
+Thumbs.db
