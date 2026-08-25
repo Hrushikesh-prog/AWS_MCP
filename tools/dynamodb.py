@@ -46,3 +46,45 @@ def aws_execute_read_query_dynamodb(
         return _err(str(e), e.response["Error"]["Code"])
     except BotoCoreError as e:
         return _err(str(e), "BOTOCORE_ERROR")
+
+
+@mcp.tool()
+def aws_update_dynamodb_billing_mode(
+    table_name: str,
+    billing_mode: str = "PAY_PER_REQUEST",
+    region: str = "us-east-1",
+) -> str:
+    """
+    Update the billing mode of a DynamoDB table.
+
+    Switching to PAY_PER_REQUEST (On-Demand) removes provisioned capacity
+    and auto-scaling policies, which cascade-deletes associated CloudWatch alarms.
+
+    Args:
+        table_name:   Name of the DynamoDB table. (required)
+        billing_mode: 'PAY_PER_REQUEST' (On-Demand) or 'PROVISIONED' (default: PAY_PER_REQUEST).
+        region:       AWS region (default 'us-east-1').
+
+    Returns:
+        JSON: table_name, billing_mode, table_status.
+    """
+    if not table_name or not table_name.strip():
+        return _err("table_name must be a non-empty string.", "VALIDATION_ERROR")
+    _VALID = {"PAY_PER_REQUEST", "PROVISIONED"}
+    if billing_mode not in _VALID:
+        return _err(f"billing_mode must be one of {sorted(_VALID)}.", "VALIDATION_ERROR")
+
+    logger.info("aws_update_dynamodb_billing_mode table=%s mode=%s region=%s", table_name, billing_mode, region)
+    try:
+        client = boto3.client("dynamodb", region_name=region)
+        resp = client.update_table(TableName=table_name, BillingMode=billing_mode)
+        table = resp.get("TableDescription", {})
+        return _ok({
+            "table_name": table.get("TableName"),
+            "billing_mode": billing_mode,
+            "table_status": table.get("TableStatus"),
+        })
+    except ClientError as e:
+        return _err(str(e), e.response["Error"]["Code"])
+    except BotoCoreError as e:
+        return _err(str(e), "BOTOCORE_ERROR")
