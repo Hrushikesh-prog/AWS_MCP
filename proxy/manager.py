@@ -23,6 +23,7 @@ Arg routing:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Any
@@ -38,6 +39,11 @@ from pydantic import ConfigDict
 from proxy.config import CHILD_SERVERS
 
 logger = logging.getLogger("aws-mcp-server.proxy")
+
+# Per-child-server connection timeout (seconds). Must be well under the
+# 30-second Claude Code /mcp reconnect timeout so all children can connect
+# in parallel before the host gives up.
+_CHILD_CONNECT_TIMEOUT = 20
 
 
 # ---------------------------------------------------------------------------
@@ -101,47 +107,75 @@ def _make_proxy_tool(session: ClientSession, child_tool: Any) -> Tool:
 
 
 # ---------------------------------------------------------------------------
-# Lifespan — connect / disconnect all child servers
+# Per-server connection helper (runs inside asyncio.gather)
+# ---------------------------------------------------------------------------
+
+async def _connect_child(cfg: dict) -> tuple[Any, ClientSession, list[Any]] | None:
+    """
+    Connect to one child server and return (ctx, session, tools).
+    Returns None on failure or timeout.
+    """
+    server_name = cfg["name"]
+    params = StdioServerParameters(
+        command=cfg["command"],
+        args=cfg.get("args", []),
+        env=cfg.get("env"),
+    )
+    ctx = stdio_client(params)
+    read, write = await ctx.__aenter__()
+
+    session = ClientSession(read, write)
+    await session.__aenter__()
+    await session.initialize()
+
+    logger.info("[proxy] Connected to child server: %s", server_name)
+    tools_resp = await session.list_tools()
+    return ctx, session, tools_resp.tools
+
+
+# ---------------------------------------------------------------------------
+# Lifespan — connect all child servers in parallel, then yield
 # ---------------------------------------------------------------------------
 
 @asynccontextmanager
 async def lifespan(app: FastMCP):
-    """FastMCP lifespan that starts child MCP servers and registers proxy tools."""
+    """FastMCP lifespan: connects child MCP servers in parallel, registers proxy tools."""
     _open_contexts: list[Any] = []
     _open_sessions: list[ClientSession] = []
     total_proxied = 0
 
-    for cfg in CHILD_SERVERS:
+    async def _safe_connect(cfg: dict):
         server_name = cfg["name"]
         try:
-            params = StdioServerParameters(
-                command=cfg["command"],
-                args=cfg.get("args", []),
-                env=cfg.get("env"),
+            return await asyncio.wait_for(
+                _connect_child(cfg),
+                timeout=_CHILD_CONNECT_TIMEOUT,
             )
-            ctx = stdio_client(params)
-            read, write = await ctx.__aenter__()
-            _open_contexts.append(ctx)
-
-            session = ClientSession(read, write)
-            await session.__aenter__()
-            _open_sessions.append(session)
-
-            await session.initialize()
-            logger.info("[proxy] Connected to child server: %s", server_name)
-
-            tools_resp = await session.list_tools()
-            for child_tool in tools_resp.tools:
-                proxy_tool = _make_proxy_tool(session, child_tool)
-                app._tool_manager._tools[child_tool.name] = proxy_tool
-                logger.info("[proxy]   + %s", child_tool.name)
-                total_proxied += 1
-
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[proxy] Timed out connecting to %s after %ds — skipping.",
+                server_name, _CHILD_CONNECT_TIMEOUT,
+            )
         except Exception as exc:
             logger.warning(
                 "[proxy] Could not connect to %s (%s %s): %s — skipping.",
                 server_name, cfg["command"], " ".join(cfg.get("args", [])), exc,
             )
+        return None
+
+    results = await asyncio.gather(*(_safe_connect(cfg) for cfg in CHILD_SERVERS))
+
+    for cfg, result in zip(CHILD_SERVERS, results):
+        if result is None:
+            continue
+        ctx, session, child_tools = result
+        _open_contexts.append(ctx)
+        _open_sessions.append(session)
+        for child_tool in child_tools:
+            proxy_tool = _make_proxy_tool(session, child_tool)
+            app._tool_manager._tools[child_tool.name] = proxy_tool
+            logger.info("[proxy]   + %s", child_tool.name)
+            total_proxied += 1
 
     logger.info("[proxy] Proxy ready — %d tools registered from child servers.", total_proxied)
     yield
