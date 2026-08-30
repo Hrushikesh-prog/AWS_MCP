@@ -1,31 +1,35 @@
-# AWS MCP Server
+# AWS MCP — Hybrid Server
 
-A production-ready, read-only [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that gives Claude direct access to your AWS account. Built with [FastMCP](https://github.com/jlowin/fastmcp) and [boto3](https://boto3.amazonaws.com/v1/documentation/api/latest/index.html).
+A hybrid [Model Context Protocol (MCP)](https://modelcontextprotocol.io) setup that combines a custom FastMCP server for EC2/S3/Lambda/RDS with official [AWS Labs MCP servers](https://github.com/awslabs/mcp) for everything else.
 
-## What it does
+## Architecture
 
-This server acts as a bridge between Claude and your AWS account. Once connected, Claude can query your AWS resources in plain English — no AWS Console or CLI needed. All operations are **read-only**; nothing is created, modified, or deleted.
+| Server | Source | Covers |
+|--------|--------|--------|
+| `custom-aws` | This project (FastMCP + boto3) | EC2 (50 tools), S3, Lambda, RDS, Resources, Prompts |
+| `awslabs.aws-documentation-mcp-server` | Official AWS Labs | AWS docs & API reference search |
+| `awslabs.cloudwatch-mcp-server` | Official AWS Labs | CloudWatch metrics, alarms, logs analysis |
+| `awslabs.dynamodb-mcp-server` | Official AWS Labs | DynamoDB design guidance & operations |
+| `awslabs.iam-mcp-server` | Official AWS Labs | IAM users, roles, policies, groups |
+| `awslabs.amazon-sns-sqs-mcp-server` | Official AWS Labs | SNS topics & SQS queue management |
+| `awslabs.billing-cost-management-mcp-server` | Official AWS Labs | AWS billing & cost management |
 
-## Features
+**Why custom for EC2?** No official AWS Labs MCP server exists for general EC2 management. The custom server fills that gap with 50 read-only EC2 tools.
 
-### Tools (9)
-Direct, targeted queries against AWS services:
+## Custom Server — What It Does
 
+### Tools (54)
 | Tool | Description |
-|---|---|
-| `aws_list_s3_buckets` | List all S3 buckets in the account |
+|------|-------------|
+| `aws_list_s3_buckets` | List all S3 buckets |
 | `aws_get_s3_objects` | List objects in a bucket (with prefix filter) |
-| `aws_list_ec2_instances` | List EC2 instances with state, IPs, and Name tags |
-| `aws_execute_read_query_dynamodb` | Scan a DynamoDB table (read-only) |
-| `aws_get_cloudwatch_logs` | Fetch and filter CloudWatch log events |
-| `aws_list_lambda_functions` | List Lambda functions and their runtimes |
+| `aws_list_ec2_instances` | List instances with state, IPs, Name tags |
+| *(+ 47 more EC2 tools)* | Describe, filter, and inspect EC2 resources |
+| `aws_list_lambda_functions` | List Lambda functions and runtimes |
 | `aws_describe_rds_instances` | Describe RDS database instances |
-| `aws_list_sns_topics` | List SNS topics |
-| `aws_list_sqs_queues` | List SQS queues |
 
 ### Resources (5)
-Bulk context loaders — Claude reads these to get a broad picture before diving into specifics:
-
+Bulk context loaders — read once for a broad account picture:
 - **account** — caller identity and account summary
 - **s3** — bucket inventory
 - **ec2** — instance inventory
@@ -33,67 +37,58 @@ Bulk context loaders — Claude reads these to get a broad picture before diving
 - **cloudwatch** — log group inventory
 
 ### Prompts (5)
-Pre-built analysis workflows Claude can run on demand:
-
+Pre-built analysis workflows:
 - **infrastructure_overview** — full account inventory summary
 - **ec2_troubleshoot** — EC2 connectivity and health diagnostics
 - **incident_analysis** — CloudWatch log triage for incidents
 - **cost_optimization** — spot idle/oversized resources
 - **s3_security_audit** — flag public or misconfigured buckets
 
-## Project structure
+## Project Structure
 
 ```
 AWS_MCP/
-├── main.py                    # Entry point — selects stdio or SSE transport
+├── main.py                    # Entry point — stdio or SSE transport
 ├── server.py                  # FastMCP app instance and logger
 ├── requirements.txt           # Pinned dependencies
 ├── Dockerfile                 # Multi-stage image for Cloud Run
-├── claude_desktop_config.json # Example config for Claude Desktop
-├── tools/                     # One module per AWS service
-│   ├── s3.py
+├── claude_desktop_config.json # Hybrid config for Claude Desktop
+├── .mcp.json                  # Hybrid config for Claude Code CLI
+├── tools/                     # Custom tools (EC2, S3, Lambda, RDS)
 │   ├── ec2.py
-│   ├── dynamodb.py
-│   ├── cloudwatch.py
+│   ├── s3.py
 │   ├── lambda_.py
-│   ├── rds.py
-│   ├── iam.py
-│   ├── sns.py
-│   └── sqs.py
+│   └── rds.py
 ├── resources/                 # Bulk context loaders
 ├── prompts/                   # Pre-built analysis workflows
 └── utils/
-    └── serializers.py         # DynamoDB TypeDeserializer helpers
+    └── serializers.py
 ```
 
 ## Prerequisites
 
 - Python 3.11+
-- AWS credentials configured (IAM user or role) with **read-only** permissions
-- [Claude Desktop](https://claude.ai/download) or any MCP-compatible client
+- [uv](https://docs.astral.sh/uv/) — required to run official AWS Labs servers
+- AWS credentials configured (`~/.aws/credentials` or env vars)
 
-## Local setup
+### Install uv (if not already installed)
+```powershell
+# Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+## Local Setup (Custom Server)
 
 ```bash
-# 1. Clone the repo
-git clone <repo-url>
-cd AWS_MCP
-
-# 2. Create and activate a virtual environment
+# 1. Create and activate virtual environment
 python -m venv .venv
+.venv\Scripts\activate          # Windows
+source .venv/bin/activate       # macOS / Linux
 
-# Windows
-.venv\Scripts\activate
-
-# macOS / Linux
-source .venv/bin/activate
-
-# 3. Install dependencies
+# 2. Install dependencies
 pip install -r requirements.txt
 
-# 4. Configure AWS credentials (choose one)
-#    Option A — AWS credentials file (~/.aws/credentials)
-#    Option B — environment variables
+# 3. Configure AWS credentials
 export AWS_ACCESS_KEY_ID=your_key
 export AWS_SECRET_ACCESS_KEY=your_secret
 export AWS_DEFAULT_REGION=us-east-1
@@ -101,69 +96,35 @@ export AWS_DEFAULT_REGION=us-east-1
 
 ## Connect to Claude Desktop
 
-Add the following to your `claude_desktop_config.json`:
+Copy `claude_desktop_config.json` content into:
+- **Windows** — `%APPDATA%\Claude\claude_desktop_config.json`
+- **macOS** — `~/Library/Application Support/Claude/claude_desktop_config.json`
 
-**Windows** — `%APPDATA%\Claude\claude_desktop_config.json`  
-**macOS** — `~/Library/Application Support/Claude/claude_desktop_config.json`  
-**Linux** — `~/.config/Claude/claude_desktop_config.json`
+Update the `custom-aws` path to match your actual install location, and set your `AWS_PROFILE` (or replace with explicit key/secret). Restart Claude Desktop.
 
-```json
-{
-  "mcpServers": {
-    "aws": {
-      "command": "C:\\path\\to\\AWS_MCP\\.venv\\Scripts\\python.exe",
-      "args": ["C:\\path\\to\\AWS_MCP\\main.py"],
-      "env": {
-        "AWS_DEFAULT_REGION": "us-east-1",
-        "AWS_ACCESS_KEY_ID": "your_key",
-        "AWS_SECRET_ACCESS_KEY": "your_secret"
-      }
-    }
-  }
-}
-```
+## Connect to Claude Code CLI
 
-Restart Claude Desktop. You should see the AWS tools available in the tools panel.
+The `.mcp.json` in this directory is automatically picked up by Claude Code when you open this folder. Update `AWS_DEFAULT_REGION` as needed. AWS credentials are read from `~/.aws/credentials` by default.
 
-## Deploy to GCP Cloud Run
-
-The server supports HTTP/SSE transport for hosted deployments.
-
-```bash
-# Build and push the image
-docker build -t gcr.io/YOUR_PROJECT/aws-mcp-server .
-docker push gcr.io/YOUR_PROJECT/aws-mcp-server
-
-# Deploy — pass AWS credentials as secrets, never bake them into the image
-gcloud run deploy aws-mcp-server \
-  --image gcr.io/YOUR_PROJECT/aws-mcp-server \
-  --region us-central1 \
-  --set-env-vars MCP_TRANSPORT=sse,AWS_DEFAULT_REGION=us-east-1 \
-  --set-secrets AWS_ACCESS_KEY_ID=aws-access-key:latest,AWS_SECRET_ACCESS_KEY=aws-secret-key:latest \
-  --allow-unauthenticated
-```
-
-The `MCP_TRANSPORT=sse` env var switches the server from STDIO to HTTP/SSE mode automatically. `PORT` is injected by Cloud Run and defaults to `8080`.
-
-## Transport modes
+## Transport Modes (Custom Server)
 
 | Mode | When to use | How to activate |
-|---|---|---|
-| `stdio` | Local Claude Desktop / CLI | Default (no env var needed) |
+|------|-------------|-----------------|
+| `stdio` | Local Claude Desktop / CLI | Default |
 | `sse` | Cloud Run / remote HTTP host | `MCP_TRANSPORT=sse` |
 
-## Security notes
+## Security Notes
 
-- All tools are **read-only** — no write or delete operations are exposed.
-- Use an IAM user or role with the minimum required read permissions (`ReadOnlyAccess` policy or a custom policy).
-- Never commit AWS credentials to source control. Use environment variables, `~/.aws/credentials`, or Secret Manager for Cloud Run.
-- The Docker image runs as a non-root user (`appuser`) for container security.
+- Custom server tools are **read-only** — no write or delete operations.
+- Official AWS Labs servers may support write operations (e.g., IAM, SNS/SQS). Use a scoped IAM role.
+- Never commit AWS credentials to source control.
+- The Docker image runs as a non-root user (`appuser`).
 
 ## Dependencies
 
 | Package | Purpose |
-|---|---|
-| `mcp[cli] >=1.9` | MCP framework (FastMCP, transport layer) |
-| `boto3 >=1.38` | AWS SDK |
-| `botocore >=1.38` | Low-level AWS client |
+|---------|---------|
+| `mcp[cli] >=1.9` | FastMCP framework |
+| `boto3 >=1.38` | AWS SDK for the custom server |
 | `pydantic >=2.10` | Data validation |
+| `uv` | Runs official AWS Labs MCP servers |
