@@ -1,1 +1,16 @@
-from . import billing, cloudwatch, dynamodb, ec2, iam, lambda_, rds, s3, sns, sqs
+from . import (
+    billing,
+    cloudformation,
+    cloudwatch,
+    dynamodb,
+    ec2,
+    ecs,
+    iam,
+    lambda_,
+    rds,
+    s3,
+    secrets_manager,
+    sns,
+    sqs,
+    ssm,
+)

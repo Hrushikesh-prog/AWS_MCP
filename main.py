@@ -22,7 +22,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8080"))
 
     logger.info(
-        "AWS MCP Server starting — transport=%s port=%s | tools=100 resources=5 prompts=5",
+        "AWS MCP Server starting — transport=%s port=%s | tools=166 resources=5 prompts=5",
         transport, port if transport == "sse" else "n/a",
     )
 
