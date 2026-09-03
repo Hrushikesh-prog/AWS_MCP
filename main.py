@@ -27,6 +27,6 @@ if __name__ == "__main__":
     )
 
     if transport == "sse":
-        mcp.run(transport="sse", host="0.0.0.0", port=port)
+        mcp.run(transport="sse")
     else:
         mcp.run(transport="stdio")

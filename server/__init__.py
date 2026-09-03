@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 
 from mcp.server.fastmcp import FastMCP
@@ -25,4 +26,6 @@ mcp = FastMCP(
         "Credentials resolved via the standard AWS credential chain."
     ),
     lifespan=lifespan,
+    host="0.0.0.0",
+    port=int(os.environ.get("PORT", "8080")),
 )
