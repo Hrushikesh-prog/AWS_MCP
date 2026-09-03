@@ -23,6 +23,7 @@ COPY server/ ./server/
 COPY tools/ ./tools/
 COPY resources/ ./resources/
 COPY prompts/ ./prompts/
+COPY proxy/ ./proxy/
 COPY utils/ ./utils/
 COPY main.py .
 
